@@ -2,7 +2,7 @@ package com.plexyze.ls;
 
 public class GLES3JNILib {
     static {
-        System.loadLibrary("gles3jni");
+        System.loadLibrary("lsjni");
     }
     public static native void init();
     public static native void resize(int width, int height);

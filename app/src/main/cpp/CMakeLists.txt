@@ -9,6 +9,7 @@ cmake_minimum_required(VERSION 3.10.2)
 
 project("ls")
 
+set(CMAKE_CXX_STANDARD 17)
 # Creates and names a library, sets it as either STATIC
 # or SHARED, and provides the relative paths to its source code.
 # You can define multiple libraries, and CMake builds them for you.
@@ -23,10 +24,14 @@ else ()
 endif (${ANDROID_PLATFORM_LEVEL} LESS 18)
 
 
-add_library(gles3jni SHARED
+
+add_library(lsjni SHARED
         ${GL3STUB_SRC}
-        gles3jni.cpp
-        RendererES3.cpp)
+        lsjni.cpp
+        log.cpp
+        ls/app/application.cpp
+        ls/3d/mesh.cpp
+        )
 
 
 # Specifies libraries CMake should link to your target library. You
@@ -34,7 +39,7 @@ add_library(gles3jni SHARED
 # build script, prebuilt third-party libraries, or system libraries.
 
 # Include libraries needed for gles3jni lib
-target_link_libraries(gles3jni
+target_link_libraries(lsjni
         ${OPENGL_LIB}
         android
         EGL
