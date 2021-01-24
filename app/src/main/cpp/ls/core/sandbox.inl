@@ -18,10 +18,51 @@
  * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-
-#pragma once
-
 namespace ls{
+
+    ActorRef Sandbox::uiActorRef;
+    ActorRef Sandbox::loggerActorRef;
+    ActorRef Sandbox::sandboxActorRef;
+
+    bool Sandbox::setUiActor(ActorRef ref) {
+        if(!ActorManager::updateActor(ref)){
+            return false;
+        }
+        uiActorRef = ref;
+        return true;
+    }
+
+    bool Sandbox::setLoggerActor(ActorRef ref) {
+        if(!ActorManager::updateActor(ref)){
+            return false;
+        }
+        loggerActorRef = ref;
+        return true;
+    }
+    bool Sandbox::setSandboxActor(ActorRef ref) {
+        if(!ActorManager::updateActor(ref)){
+            return false;
+        }
+        sandboxActorRef = ref;
+        return true;
+    }
+
+
+
+    void Sandbox::uiUpdate() {
+        ActorManager::updateActor(uiActorRef);
+        ActorManager::updateActor(loggerActorRef);
+    }
+
+    bool Sandbox::calcUpdate() {
+        int calculateCount = 0;
+        while(calculateCount<MAX_UPDATE && ActorManager::isUpdateNotEmpty()){
+            ActorManager::updateActor(sandboxActorRef);
+            calculateCount += ActorManager::actorManagerUpdate();
+        }
+        return ActorManager::isUpdateNotEmpty();
+    }
+
 
 
 

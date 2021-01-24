@@ -23,28 +23,23 @@
 #include <memory>
 #include "thread_pool.h"
 #include "sandbox.h"
-#include "pointer.h"
-#include "array.h"
+#include "memory.h"
 #include "message_log.h"
 
 using namespace std;
 
 namespace ls{
 
-    class Device{
+    class Device:public GlobalMemoryAccess{
         static const int MAX_ACTORS = 16;
     private:
         static mutex m;
         static condition_variable cvWait;
-
         static shared_ptr<Log> log;
-        static vector<shared_ptr<Sandbox>> sandboxes;
 
         static void calcUpdate();
 
     public:
-
-        static void startActor(SandboxActor* && sandboxActor);
 
         static void init(const shared_ptr<Log>& _log);
 

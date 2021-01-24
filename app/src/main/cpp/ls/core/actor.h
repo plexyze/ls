@@ -24,68 +24,31 @@
 #include "default_id.h"
 #include "message.h"
 #include "sandbox.h"
-#include "array.h"
-#include "pointer.h"
+#include "memory.h"
 #include <unordered_set>
 
 namespace ls{
 
     struct ActorManagerInfo{
         bool isUpdate = false;
+        int size = 0;
     };
 
-    class SandboxContext{
-        friend class ActorManager;
-    private:
-        unordered_set<ActorRef> actors;
-        int64_t memorySizeMax = 268435456;
-        int64_t memoryAllocated = 0;
-        ActorRef ui = nullptr;
-        ActorRef logger = nullptr;
-        ActorRef sandbox = nullptr;
-    public:
-        inline int64_t getMaxMemoryDiffSize(){return getMemoryFreeSize() / actors.size();}
-        inline int64_t getMemoryFreeSize(){return memorySizeMax - memoryAllocated;}
-        inline int64_t getMemoryMaxSize(){return memorySizeMax;}
-        inline int64_t getMemoryAllocated(){return memoryAllocated;}
-        inline ActorRef getUi(){return ui;}
-        inline ActorRef getLogger(){return logger;}
-        inline ActorRef getSandbox(){return sandbox;}
-    };
-
-    class Actor: public ActorRefClass{
+    class Actor: public ActorMemory, ActorRefClass{
         friend class ActorManager;
         friend class WorkGroup;
-
-    private:
-        enum Event{
-            EVENT_NON,
-            EVENT_SEND,
-            EVENT_MEMORY,
-            EVENT_FINISH,
-            MAX_EVENT
-        };
     private:
         void asyncUpdate();
-
     private:
-        static SandboxContext* sandboxContext;
-        int8_t events[MAX_EVENT] = {EVENT_NON};
         ActorManagerInfo info;
-        Memory memory;
         bool isRepeat = false;
         MessagesQueue send;
         MessagesQueue receive;
         MessagesQueue error;
-        int64_t memoryDiffSize = 0;
     protected:
-        int64_t memorySizeRequired = 256;
+        int64_t availableMemory = 1024;
         int workGroupIndex = -1;
-
-        inline int64_t getMemoryMaxSize();
-        inline int64_t getMemoryFreeSize();
         inline uint64_t getId();
-        inline SandboxContext& getSandboxContext(){return *sandboxContext;}
         inline void repeat();
 
         template<class T>
@@ -94,11 +57,11 @@ namespace ls{
         virtual void onInit() { };
         virtual void onReceive(Pointer<Message>& msg) { };
         virtual void onError(Pointer<Message>& msg) { };
+        virtual void onAsyncUpdate(){}
         virtual void onUpdate(){}
 
     public:
         virtual ~Actor() {}
-        void setLocalPointers();
     };
 
     class WorkGroup: public Job{
@@ -112,51 +75,32 @@ namespace ls{
         ~WorkGroup() override {}
     };
 
-
-
-    class ActorManager{
+    class ActorManager: public GlobalMemoryAccess{
     private:
-        SandboxContext sandboxContext;
-        vector<Actor*> update;
-        vector<Job*> workGroups;
+        static unordered_set<ActorRef> actors;
+        static vector<Actor*> update;
+        static vector<Job*> workGroups;
+        static int workGroupsCount;
     private:
-        inline void updateSendMessage(Actor *actor);
-        inline void updateMemorySize(Actor *actor);
-    private:
+        static inline void updateSendMessage(Actor *actor);
+        static inline void addUpdate(Actor* actor);
+        static inline void delUpdate(int index);
 
-        inline void addUpdate(Actor* actor);
-        inline void delUpdate(int index);
+        static void updateWorkCroupCount();;
 
     public:
-        void setSandboxContext();
-        bool setUiActor(ActorRef ref);
-        bool setLoggerActor(ActorRef ref);
-        bool setSandboxActor(ActorRef ref);
 
-        ActorRef getUiActor();
-        ActorRef getLoggerActor();
-        ActorRef getSandboxActor();
+        static void setWorkCroupCount(int wgCount);
 
-        inline int64_t  memoryFreeSize(){
-            return  sandboxContext.memorySizeMax - sandboxContext.memoryAllocated;
-        }
-        inline int64_t  memoryAllocatedSize(){
-            return sandboxContext.memoryAllocated;
-        }
-        ActorManager();
-        ~ActorManager();
+        template<class T,typename... Args>
+        static ActorRef createActor(Args... args);
 
-        void setMaxCore(int coreCount);
+        static bool updateActor(ActorRef ref);
 
-        ActorRef add(Actor* actor);
+        static int actorManagerUpdate();
 
-        bool notify(ActorRef ref);
-
-        int coreUpdate();
-
-        inline bool isUpdateEmpty();
-        inline bool isUpdateNotEmpty();
-
+        static inline bool isUpdateEmpty();
+        static inline bool isUpdateNotEmpty();
     };
 
 

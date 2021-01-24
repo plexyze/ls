@@ -30,73 +30,25 @@ using namespace std;
 
 namespace ls{
 
-    class UIActor: public Actor{
-        friend class Sandbox;
-    protected:
-        virtual void onUpdateUI() = 0;
-    public:
-        virtual ~UIActor(){}
-    };
-
-    class LoggerActor: public Actor{
-        friend class Sandbox;
-    protected:
-        virtual void onUpdateLogger() = 0;
-    public:
-        virtual ~LoggerActor(){}
-    };
-
-    class SandboxActor: public Actor{
-        friend class Sandbox;
-    protected:
-        virtual void onUpdateSandbox(ActorManager& manager) = 0;
-    public:
-        virtual ~SandboxActor(){}
-    };
-
     class Sandbox{
         static const int MAX_UPDATE = 1000;
-    private:
-        ActorManager manager;
     public:
-        Sandbox(SandboxActor* && actor){
-            manager.setSandboxContext();
-            ActorRef ref = manager.add(actor);
-            manager.setSandboxActor(ref);
-            manager.setMaxCore(ThreadPool::getThreads());
-        }
+        static ActorRef uiActorRef;
+        static ActorRef loggerActorRef;
+        static ActorRef sandboxActorRef;
+    public:
 
-        void setMaxCore(int cores){
-            manager.setMaxCore(cores);
-        }
+        static bool setUiActor(ActorRef ref);
+        static bool setLoggerActor(ActorRef ref);
+        static bool setSandboxActor(ActorRef ref);
 
-        void uiUpdate(){
-            manager.setSandboxContext();
-            UIActor* uiActor = static_cast<UIActor*>(manager.getUiActor());
-            if(uiActor){
-                uiActor->setLocalPointers();
-                uiActor->onUpdateUI();
-                manager.notify(uiActor);
-            }
-            LoggerActor* loggerActor = static_cast<LoggerActor*>(manager.getUiActor());
-            if(loggerActor){
-                loggerActor->setLocalPointers();
-                loggerActor->onUpdateLogger();
-                manager.notify(loggerActor);
-            }
-        }
+        static ActorRef getUiActor(){ return uiActorRef; }
+        static ActorRef getLoggerActor(){ return loggerActorRef; }
+        static ActorRef getSandboxActor(){ return sandboxActorRef; }
 
-        bool calcUpdate(){
-            manager.setSandboxContext();
-            int calculateCount = 0;
-            while(calculateCount<MAX_UPDATE && manager.isUpdateNotEmpty()){
-                SandboxActor* sandboxActor = static_cast<SandboxActor*>(manager.getSandboxActor());
-                sandboxActor->setLocalPointers();
-                sandboxActor->onUpdateSandbox(manager);
-                calculateCount += manager.coreUpdate();
-            }
-            return manager.isUpdateNotEmpty();
-        }
+        static void uiUpdate();
+
+        static bool calcUpdate();
 
     };
 
@@ -104,3 +56,5 @@ namespace ls{
 
 
 }
+
+#include "sandbox.inl"

@@ -21,7 +21,6 @@
 namespace ls{
 
     //Actor=========================================================================================
-    SandboxContext* Actor::sandboxContext = nullptr;
     uint64_t Actor::getId() {
         return (uint64_t)this;
     }
@@ -31,6 +30,7 @@ namespace ls{
     }
 
     void Actor::asyncUpdate() {
+        changeMaxSize(availableMemory);
         Pointer<Message> msg;
         while(receive.size()>0){
             receive.pop(msg);
@@ -41,43 +41,14 @@ namespace ls{
             onError(msg);
         }
         msg.clear();
-        onUpdate();
-        int eventCount = 0;
-
-        //EVENT_SEND
-        if(!send.empty()){
-            events[eventCount++]=EVENT_SEND;
-        }
-
-        //EVENT_MEMORY
-        memoryDiffSize = memory.getDiffSize(memorySizeRequired,sandboxContext->getMaxMemoryDiffSize());
-        if(memoryDiffSize != 0){
-            events[eventCount++]=EVENT_MEMORY;
-        }
-
-        //EVENT_FINISH
-        if(!isRepeat){
-            events[eventCount++]=EVENT_FINISH;
-        }
-        isRepeat = false;
-        //end
-        events[eventCount++]=EVENT_NON;
+        onAsyncUpdate();
+        changeMaxSize(availableMemory);
+        isRepeat = isRepeat || getDiffSize()!=0 || send.isNotEmpty() || availableMemory != getMaxSize();
     }
 
     template<class T>
     void Actor::sendMessage(Pointer <T> &msg) {
         send.push(staticPointerCast<Message>(msg));
-    }
-
-    int64_t Actor::getMemoryMaxSize() {
-        return memory.getMaxSize();
-    }
-    int64_t Actor::getMemoryFreeSize() {
-        return memory.freeSize();
-    }
-
-    void Actor::setLocalPointers() {
-        LocalMemory = &memory;
     }
 
     //WorkGroup=====================================================================================
@@ -87,7 +58,7 @@ namespace ls{
 
     void WorkGroup::asyncUpdate() {
         for(auto a: actors){
-            a->setLocalPointers();
+            THREAD_LOCAL_ACTOR_MEMORY = a;
             a->asyncUpdate();
         }
         actors.clear();
@@ -95,15 +66,10 @@ namespace ls{
 
 
     //ActorManager==================================================================================
-    ActorManager::ActorManager() {
-        setMaxCore(1);
-    }
-    ActorManager::~ActorManager() {
-        for(auto ref :sandboxContext.actors){
-            delete (Actor*)ref;
-        }
-        sandboxContext.actors.clear();
-    }
+    unordered_set<ActorRef> ActorManager::actors;
+    vector<Actor*> ActorManager::update;
+    vector<Job*> ActorManager::workGroups;
+    int ActorManager::workGroupsCount = 16;
 
     void ActorManager::addUpdate(Actor *actor) {
         if(actor->info.isUpdate){
@@ -123,13 +89,13 @@ namespace ls{
     void ActorManager::updateSendMessage(Actor *sendActor) {
         Pointer<Message> msg;
         while(sendActor->send.size()>0){
-            sendActor->setLocalPointers();
+            THREAD_LOCAL_ACTOR_MEMORY = sendActor;
             sendActor->send.pop(msg);
             msg->from = sendActor;
             Actor* receiveActor = (Actor*) msg->to;
-            if(sandboxContext.actors.count(receiveActor)){
-                Memory::Header* header = msg.release();
-                receiveActor->setLocalPointers();
+            if(actors.count(receiveActor)){
+                ActorMemory::Header* header = msg.release();
+                THREAD_LOCAL_ACTOR_MEMORY = receiveActor;
                 msg.capture(header);
                 receiveActor->receive.push(msg);
                 addUpdate(receiveActor);
@@ -139,83 +105,66 @@ namespace ls{
         }
     }
 
-    void ActorManager::updateMemorySize(Actor *actor) {
-        sandboxContext.memoryAllocated += actor->memory.setDiffMaxSize(actor->memoryDiffSize);
-    }
-
-    void ActorManager::setSandboxContext() {
-        Actor::sandboxContext = &sandboxContext;
-    }
-
-    bool ActorManager::setUiActor(ActorRef ref) {
-        if(!sandboxContext.actors.count(ref)){
-            return false;
-        }
-        sandboxContext.ui = ref;
-        return true;
-    }
-
-    bool ActorManager::setLoggerActor(ActorRef ref) {
-        if(!sandboxContext.actors.count(ref)){
-            return false;
-        }
-        sandboxContext.logger = ref;
-        return true;
-    }
-    bool ActorManager::setSandboxActor(ActorRef ref) {
-        if(!sandboxContext.actors.count(ref)){
-            return false;
-        }
-        sandboxContext.sandbox = ref;
-        return true;
-    }
-    ActorRef ActorManager::getUiActor(){
-        return sandboxContext.ui;
-    }
-    ActorRef ActorManager::getLoggerActor(){
-        return sandboxContext.logger;
-    }
-    ActorRef ActorManager::getSandboxActor(){
-        return sandboxContext.sandbox;
-    }
-
-
-    void ActorManager::setMaxCore(int coreCount) {
-        if(coreCount<1){
-            coreCount = 1;
-        }
-
-        while (workGroups.size() < coreCount){
+    void ActorManager::updateWorkCroupCount() {
+        while (workGroups.size() < workGroupsCount){
             workGroups.push_back(new WorkGroup());
         }
 
-        while (workGroups.size() > coreCount){
+        while (workGroups.size() > workGroupsCount){
             delete workGroups.back();
             workGroups.pop_back();
         }
     }
 
-    ActorRef ActorManager::add(Actor * actor) {
-        actor->setLocalPointers();
+    void ActorManager::setWorkCroupCount(int wgCount) {
+        if(wgCount<1){
+            wgCount = 1;
+        }
+        workGroupsCount = wgCount;
+    }
+
+    template<class T, typename... Args>
+    ActorRef ActorManager::createActor(Args... args) {
+        if(sizeof(T) > GlobalMemory::getFreeSize()){
+            return nullptr;
+        }
+        Actor* actor = new T(args...);
+        actor->info.size = sizeof(T);
+        changeMemoryCurrSize(sizeof(T));
+        ActorMemory* old = THREAD_LOCAL_ACTOR_MEMORY;
+        THREAD_LOCAL_ACTOR_MEMORY = actor;
         actor->onInit();
+        THREAD_LOCAL_ACTOR_MEMORY = old;
+        actors.insert(actor);
         addUpdate(actor);
-        sandboxContext.actors.insert(actor);
         return actor;
     }
 
-    bool ActorManager::notify(ActorRef ref) {
-        if(sandboxContext.actors.count(ref) == 0){
+    bool ActorManager::updateActor(ActorRef ref){
+        if(actors.count(ref) == 0){
             return false;
         }
-        addUpdate((Actor*)ref);
+        Actor* actor = static_cast<Actor*>(ref);
+        ActorMemory* old = THREAD_LOCAL_ACTOR_MEMORY;
+        THREAD_LOCAL_ACTOR_MEMORY = actor;
+        actor->onUpdate();
+        THREAD_LOCAL_ACTOR_MEMORY = old;
+        addUpdate(actor);
         return true;
     }
 
-    int ActorManager::coreUpdate() {
+    int ActorManager::actorManagerUpdate() {
+        if(actors.size() == 0){
+            setMemoryMaxDiffSize(0);
+        }
+        setMemoryMaxDiffSize(GlobalMemory::getMaxSize()/actors.size());
+
+        updateWorkCroupCount();
         int calculateCount = update.size();
         if(calculateCount == 0){
-            return calculateCount;
+            return 0;
         }
+
         for(int i=0; i<calculateCount; i++){
             Actor* actor = update[i];
             int coreIndex = actor->workGroupIndex;
@@ -230,27 +179,17 @@ namespace ls{
         int i=0;
         while( i<update.size()){
             Actor* actor = update[i];
-            int event = 0;
-            int8_t* events = actor->events;
-            while(events[event] != Actor::EVENT_NON){
-                switch (events[event++]) {
-                    case Actor::EVENT_SEND:
-                        updateSendMessage(actor);
-                        break;
-                    case Actor::EVENT_MEMORY:
-                        updateMemorySize(actor);
-                        break;
-                    case Actor::EVENT_FINISH:
-                        if(actor->receive.empty()){
-                            delUpdate(i);
-                            i--;
-                        }
-                        break;
-                }
+            updateSendMessage(actor);
+            takeDiffActorMemory(actor);
+            bool isExit = !actor->isRepeat && actor->receive.isEmpty();
+            actor->isRepeat = false;
+            if(isExit){
+                delUpdate(i);
+                continue;
             }
-            events[0] = Actor::EVENT_NON;
             i++;
         }
+
         return calculateCount;
     }
 

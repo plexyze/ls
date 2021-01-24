@@ -36,7 +36,8 @@ Java_com_plexyze_ls_GLES3JNILib_init(JNIEnv* env, jclass obj) {
         auto log = shared_ptr<AndroidLog>(new AndroidLog());
 
         Device::init(log);
-        Device::startActor(new TestSandboxActor(log.get()));
+        ActorRef ref = ActorManager::createActor<TestSandboxActor>(log.get());
+        Sandbox::setSandboxActor(ref);
 
         Application::renderer = shared_ptr<Renderer>(new OpenGlEs3(log));
     }
