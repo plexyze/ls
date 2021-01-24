@@ -20,7 +20,7 @@
 
 #pragma once
 
-#include "pointer.h"
+#include "memory.h"
 
 using namespace std;
 
@@ -56,9 +56,8 @@ namespace ls{
         Pointer<Message> first;
         int count = 0;
     public:
-        inline bool empty(){
-            return count == 0;
-        }
+        inline bool isEmpty(){ return count == 0;}
+        inline bool isNotEmpty(){ return count != 0;}
         inline int size(){
             return count;
         }

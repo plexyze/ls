@@ -21,11 +21,33 @@
 #pragma once
 
 #include "stdlib.h"
-#include "default_id.h"
 
 namespace ls{
 
-    class Memory{
+
+    class GlobalMemory{
+    private:
+        friend class GlobalMemoryAccess;
+    private:
+        static int64_t maxDiffSize;
+        static int64_t maxSize;
+        static int64_t currSize;
+    public:
+        static inline int64_t getMaxDiffSize(){return maxDiffSize;}
+        static inline int64_t getMaxSize(){return maxSize;}
+        static inline int64_t getSize(){return currSize;}
+        static inline int64_t getFreeSize(){return maxSize - currSize;}
+    };
+
+    class ActorMemory{
+    private:
+        template<class T>
+        friend class Pointer;
+
+        template<class T>
+        friend class Array;
+
+        friend class GlobalMemoryAccess;
     public:
         struct Header{
             int32_t size;
@@ -35,112 +57,125 @@ namespace ls{
         static const int HEADER_SIZE = sizeof(Header) + 16;
 
     private:
+        int64_t diffSize = 0;
         int64_t maxSize = 0;
         int64_t currSize = 0;
 
     public:
-        inline int64_t getDiffSize(int64_t requiredSize, int64_t maxMemorySize){
-            int64_t diff = requiredSize - maxSize;
-            int64_t minDiff = currSize - maxSize;
-            if(diff > maxMemorySize){
-                diff = maxMemorySize;
-            }
-            if(diff < minDiff){
-                diff = minDiff;
-            }
-            return diff;
-        }
+        inline int64_t freeSize(){ return maxSize - currSize; }
+        inline int64_t size(){ return currSize;}
+        inline int64_t getMaxSize(){return maxSize;}
+        inline int64_t getDiffSize(){return diffSize;}
+    private:
+        Header* allocData(int dataSize);
 
-        inline int64_t freeSize(){
-            return maxSize - currSize;
-        }
-        inline int64_t size(){
-            return currSize;
-        }
-        inline int64_t setDiffMaxSize(int64_t diff){
-            int64_t minDiff = currSize - maxSize;
-            if(diff < minDiff){
-                diff = minDiff;
-            }
-            maxSize+=diff;
-            return diff;
-        }
-        inline int64_t getMaxSize(){
-            return maxSize;
-        }
+        void freeData(Header* header);
+
+        void releaseData(Header* header);
+
+        void captureData(Header* header);
+
+        bool resizeData(Header* &header, int dataSize);
+
+    protected:
+        inline void changeMaxSize(int64_t requiredSize);
+
     public:
-
-        Header* allocData(int dataSize){
-            if(dataSize < 8){
-                dataSize = 8;
-            }
-            if(dataSize + HEADER_SIZE > freeSize()){
-                return nullptr;
-            }
-            Header* header = (Header*) malloc(dataSize + sizeof(Header));
-            if(header == nullptr){
-                return nullptr;
-            }
-            header->size = dataSize;
-            header->pointers = 0;
-            currSize+=(header->size+HEADER_SIZE);
-            return header;
-        }
-
-        void freeData(Header* header){
-            if(header== nullptr){
-                return;
-            }
-            currSize -= (header->size+HEADER_SIZE);
-            free(header);
-        }
-
-        void releaseData(Header* header){
-            if(header == nullptr){
-                return;
-            }
-
-            currSize -= (header->size+HEADER_SIZE);
-            maxSize -= (header->size+HEADER_SIZE);
-        }
-
-        void captureData(Header* header){
-            if(header == nullptr){
-                return;
-            }
-            currSize += (header->size+HEADER_SIZE);
-            maxSize += (header->size+HEADER_SIZE);
-        }
-
-        bool resizeData(Header* &header, int dataSize){
-            if(header == nullptr){
-                header = allocData(dataSize);
-                return header!=nullptr;
-            }
-            if(dataSize < sizeof(Header)){
-                dataSize = sizeof(Header);
-            }
-            if(dataSize - header->size > freeSize()){
-                return false;
-            }
-            void* newPtr = realloc(header,dataSize+ sizeof(Header));
-
-            if(newPtr == nullptr){
-                return false;
-            }
-            header = (Header*)newPtr;
-            currSize += (dataSize - header->size);
-            header->size = dataSize;
-            return true;
-        }
-
 
 
     };
 
-    thread_local Memory* LocalMemory;
+    class GlobalMemoryAccess{
+    protected:
+        static inline void takeDiffActorMemory(ActorMemory* actorMemory){
+            GlobalMemory::currSize += actorMemory->diffSize;
+            actorMemory->diffSize = 0;
+        }
+
+        static inline void setMemoryMaxSize(int64_t maxSize){
+            if(maxSize<GlobalMemory::currSize){
+                maxSize = GlobalMemory::currSize;
+            }
+            GlobalMemory::maxSize = maxSize;
+        }
+
+        static inline void setMemoryMaxDiffSize(int64_t diffSize){
+            GlobalMemory::maxDiffSize = diffSize;
+        }
+
+        static inline void changeMemoryCurrSize(int64_t currSize){
+            GlobalMemory::currSize += currSize;
+        }
+
+    };
 
 
 
+    thread_local ActorMemory* THREAD_LOCAL_ACTOR_MEMORY;
 
+    template<class T>
+    class Pointer{
+    private:
+        ActorMemory::Header* header = nullptr;
+
+        inline T* tp(){ return (T*)(header+1);}
+    public:
+
+        Pointer(){}
+        ~Pointer(){clear();}
+        inline bool isNull(){ return header == nullptr;}
+        inline bool isNotNull(){return header != nullptr;}
+        inline T* operator->(){return tp();}
+
+        template<typename... Args>
+        bool create(Args... args);
+
+        Pointer(Pointer&& p) = delete;
+        Pointer& operator=(Pointer&& p) = delete;
+
+        Pointer(Pointer& p);
+
+        Pointer& operator=(Pointer& p);
+
+        ActorMemory::Header* release();
+
+        void capture(ActorMemory::Header* h);
+
+        void clear();
+    };
+
+    template<class To, class From>
+    Pointer<To>& staticPointerCast(Pointer<From>& from){
+        return *(Pointer<To>*)&from;
+    }
+
+    template<class T>
+    class Array{
+    private:
+        ActorMemory::Header* header = nullptr;
+        inline T* tp(int index){ return (T*)(header+1)+index;}
+    public:
+
+        Array(){}
+        ~Array(){
+            resize(0);
+            setCapacity(0);
+        }
+        inline T& operator[](int index){ return *tp(index); }
+        inline T& back(){ return *tp(size()-1); }
+        inline void clear(){ resize(0); }
+
+        inline int size();
+
+        inline int getCapacity();
+
+        inline bool upSize();
+
+        bool setCapacity(int cap);
+
+        bool resize(int newCount);
+    };
 }
+
+
+#include "memory.inl"

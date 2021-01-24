@@ -22,7 +22,9 @@ namespace ls{
 
         }
     protected:
-        void onInit() override {}
+        void onInit() override {
+            availableMemory = 0;
+        }
 
         void onReceive(Pointer<Message> &msg) override {
             switch (msg->getType()) {
@@ -33,12 +35,13 @@ namespace ls{
         }
 
         void onReceiveMessage(Pointer<MessageLogError>& error){
-            error->msg << " loggerFreeSize: " << LocalMemory->freeSize()<<"/"<<LocalMemory->getMaxSize() << endl;
+            error->msg << " loggerFreeSize: " << THREAD_LOCAL_ACTOR_MEMORY->freeSize()<<"/"<<THREAD_LOCAL_ACTOR_MEMORY->getMaxSize() << endl;
             log->e("T",error->msg);
         }
+
     };
 
-    class TestUIActor: public UIActor{
+    class TestUIActor: public Actor{
     private:
         int i = 0;
     public:
@@ -48,18 +51,18 @@ namespace ls{
 
     protected:
         void onInit() override {
-            memorySizeRequired = 256;
+            availableMemory = 256;
         }
 
 
     public:
-        void onUpdateUI() override {
+        void onUpdate() override {
             i++;
             if(i%300 == 1){
                 Pointer<MessageLogError> msg;
                 if(msg.create()){
-                    msg->to = getSandboxContext().getLogger();
-                    msg->msg << " uiUpdate: "<< getId() << " freeSize: " << LocalMemory->freeSize()<<"/"<<LocalMemory->getMaxSize()<< endl;
+                    msg->to = Sandbox::getLoggerActor();
+                    msg->msg << " uiUpdate: "<< getId() << " freeSize: " << THREAD_LOCAL_ACTOR_MEMORY->freeSize()<<"/"<<THREAD_LOCAL_ACTOR_MEMORY->getMaxSize()<<"/"<<GlobalMemory::getSize()<< endl;
                     sendMessage(msg);
                 }
             }
@@ -68,7 +71,7 @@ namespace ls{
         virtual ~TestUIActor(){}
     };
 
-    class TestSandboxActor: public SandboxActor{
+    class TestSandboxActor: public Actor{
     private:
         Log* log = nullptr;
         bool firstUpdate = true;
@@ -77,13 +80,13 @@ namespace ls{
 
         }
     protected:
-        void onUpdateSandbox(ActorManager &manager) override {
+        void onUpdate() override {
             if(firstUpdate){
                 firstUpdate = false;
-                ActorRef actorLogger = manager.add(new ActorLogger(log) );
-                ActorRef actorUi = manager.add(new TestUIActor() );
-                manager.setLoggerActor(actorLogger);
-                manager.setUiActor(actorUi);
+                ActorRef loggerRef = ActorManager::createActor<ActorLogger>(log);
+                Sandbox::setLoggerActor(loggerRef);
+                ActorRef uiRef = ActorManager::createActor<TestUIActor>();
+                Sandbox::setUiActor(uiRef);
             }
         }
     };
